@@ -1,122 +1,76 @@
 # Trader Sentiment Analytics
 
-An exploratory data analysis examining how cryptocurrency traders perform across different market sentiment regimes, using the Bitcoin Fear & Greed Index as a sentiment indicator.
+An auditable, descriptive analysis of historical Hyperliquid trade records alongside the Bitcoin Fear & Greed Index. The project turns raw operational data into data-quality controls, segmented realised-PnL KPIs, exportable summary tables, and a management-readable report.
 
-## Overview
+## Business problem and objectives
 
-This project analyzes **211,224+ trades** from the Hyperliquid exchange (2023-2025) and correlates trader profitability with market sentiment. The analysis reveals actionable insights about trading behavior during Fear, Neutral, and Greed periods—identifying which strategies work best when markets are euphoric vs panicked.
+Trading and operations stakeholders need a reliable way to review historical performance across market-sentiment regimes without treating patterns as trading rules. This project:
 
-## Dataset
+- reconciles trade timestamps to daily market-sentiment classifications;
+- identifies data-quality exceptions before aggregating results;
+- measures realised closed-PnL, win rates, and performance by sentiment and reported transaction side; and
+- produces reproducible CSV outputs and an executive Markdown report for review and decision support.
 
-- **Historical Trades:** Hyperliquid exchange trade data (May 2023 - May 2025)
-  - 211,224 total trades
-  - 104,408 closed PnL trades
-  - 32 unique traders
-  - 246 crypto assets
-  
-- **Sentiment Index:** Bitcoin Fear & Greed Index (Crypto Fear Index)
-  - 5 classifications: Extreme Fear, Fear, Neutral, Greed, Extreme Greed
-  - 100% coverage across trade dates
+The workflow is designed for business analysis and reporting. It does **not** predict prices, prove a causal effect of sentiment, or provide investment advice.
 
-## Key Findings
+## Data sources and provenance
 
-### 📊 PnL Performance by Sentiment
-- **Fear periods:** Highest mean PnL per trade ($113)
-- **Extreme Greed:** Highest win rate (89%) but lower per-trade profitability
-- **Regime Shift Days:** ~8% higher mean PnL ($103 vs $96) — detecting sentiment transitions is profitable
+The repository tracks the two input files used by both the original notebook and the reporting command:
 
-### 📈 Buy vs Sell Strategy
-- **During Fear:** BUY trades outperform ($210 avg) — panic buying captures dips
-- **During Greed:** SELL trades dominate ($176 avg) — shorting euphoria extracts value
-- **Contrarian edge:** Confirmed as traders profit most when fading sentiment extremes
+- `historical_data (1).csv` — supplied Hyperliquid historical trade export, with account, asset, transaction-side, timestamp, realised `Closed PnL`, fee, and transaction identifiers.
+- `fear_greed_index.csv` — supplied daily Bitcoin Fear & Greed Index extract, with timestamp, numeric index value, classification, and date.
 
-### 🎯 Trader Archetypes
-- **Contrarian Traders:** Profit more in Fear periods (buying low)
-- **Momentum Traders:** Profit more in Greed periods (riding rallies)
-- **Finding:** Contrarian traders show higher total PnL on average
+The reporting process never fabricates or imputes input values. Its exact input scope, record counts, date matching, and exclusions are exported every time it runs.
 
-### 💎 Asset-Specific Insights
-- **SOL:** Momentum favorite ($891 avg in Greed)
-- **ETH:** Safe haven ($473 in Fear, $350 in Extreme Fear)
-- **TRUMP:** News-driven volatility (not sentiment-correlated)
-- **FARTCOIN:** Loses consistently during Fear (avoid in downturns)
+## Dataset volume and coverage
 
-## Project Structure
+The verified full-data run processed **211,224** trade records dated 1 May 2023–1 May 2025 and 2,644 sentiment-index dates (1 February 2018–2 May 2025). It found 0 invalid timestamps, 0 invalid/missing PnL values, 0 exact duplicate trade rows, 32 accounts, and 246 assets. Calendar-date reconciliation matched 211,218 rows (99.997%); six valid trades had no matching sentiment date and were excluded from sentiment aggregates rather than imputed. Re-run the command below to regenerate these controls from the tracked inputs.
 
-```
-analysis.ipynb
-├── Section 1: Data Loading & Preparation
-│   └── Load Fear/Greed and trade data, merge on dates
-├── Section 2: Core Analysis - PnL & Win Rate by Sentiment
-│   └── Sentiment regime performance metrics
-├── Section 3: Directional Analysis - Buy vs Sell
-│   └── Long vs short performance across sentiment
-├── Section 4: Trader Archetypes
-│   └── Contrarian vs Momentum classification
-├── Section 5: Asset Sensitivity
-│   └── Individual coin performance heatmap
-└── Section 6: Regime Shift Analysis
-    └── Early sentiment transition detection
-```
+## Methodology and quality controls
 
-## Dependencies
+1. Load the full trade CSV and retain all source records.
+2. Parse `Timestamp IST` to a calendar date and coerce `Closed PnL` to numeric; disclose invalid records rather than silently filling them.
+3. Validate the sentiment classifications, reject conflicting classifications for a date, and allow only consistent duplicate sentiment rows.
+4. Join valid trade rows to sentiment by calendar date with a many-to-one constraint; disclose rows that do not match.
+5. For matched, non-zero realised-PnL records, calculate record counts, winning/losing counts, total, mean, median, and win rate by sentiment, transaction side, and their intersection.
+6. Export all results alongside a Markdown executive report that states its limitations.
 
-```
-pandas>=2.0
-numpy>=1.26
-matplotlib>=3.8
-seaborn>=0.12
-python>=3.9
-```
+An “exact duplicate” means a row duplicated across every source field; duplicates are counted and retained, not automatically deleted. The reported win rate uses only matched non-zero `Closed PnL` records, so it is not an overall trade or position win rate. `BUY` and `SELL` are reported transaction labels and must not be interpreted as long/short exposure without position-level data.
 
-## Usage
-
-### Running the Analysis
+## Reproducible setup and execution
 
 ```bash
-# Install dependencies
-pip install -r requirements.txt
-
-# Run notebook in Jupyter
-jupyter notebook analysis.ipynb
+python -m pip install -r requirements.txt
+python -m unittest discover -s tests -v
+python scripts/reporting.py --trades "historical_data (1).csv" --sentiment fear_greed_index.csv --out reports
 ```
 
-### Loading Data
+The command creates:
 
-Place these CSV files in the project directory:
-- `fear_greed_index.csv` — Crypto Fear & Greed Index (date, classification, value)
-- `historical_data (1).csv` — Hyperliquid trade data (Timestamp IST, Account, Coin, Side, Closed PnL, etc.)
+- `reports/data_quality_summary.csv`
+- `reports/pnl_by_sentiment.csv`
+- `reports/pnl_by_side.csv`
+- `reports/pnl_by_sentiment_and_side.csv`
+- `reports/executive_report.md`
 
-## Visualization Overview
+`reports/` is Git-ignored so the outputs can be regenerated locally from the tracked real inputs. See [docs/REPORTING.md](docs/REPORTING.md) for the concise workflow reference. The original exploratory analysis remains available in `analysis.ipynb`.
 
-1. **PnL by Sentiment** — Stacked bar charts showing mean PnL and win rates
-2. **Buy vs Sell Performance** — Directional strategy comparison across regimes
-3. **Trader Type Scatterplot** — Fear PnL vs Greed PnL highlighting trader archetypes
-4. **Asset Heatmap** — Coin-specific profitability across sentiment regimes
-5. **Regime Shift Impact** — Mean PnL on classification transition days
+## Verified findings and limitations
 
-## Key Actionable Signals
+In the verified run, 104,402 matched records had non-zero closed PnL. The largest total realised PnL segment was **Fear** ($3,357,155.44 across 29,808 records); **Extreme Greed** had the highest mean non-zero PnL ($130.21) and win rate (89.17%). By transaction label, SELL records totalled $6,589,147.64 across 68,345 non-zero records and BUY records totalled $3,665,339.31 across 36,057. These are historical descriptive associations, not recommended actions or evidence that any sentiment state or transaction side caused a result.
 
-✅ **Buy during Fear** — Highest absolute returns  
-✅ **Sell into Greed** — High win rates on shorts  
-✅ **Watch Sentiment Transitions** — Regime shifts = 8% PnL uplift  
-✅ **Size positions by sentiment** — Fear allows larger risk, Greed caps exposure  
-✅ **Match strategy to asset** — SOL for momentum, ETH as hedge  
+The generated executive report is the source of record for realised descriptive findings, because it is rerun from the actual CSVs. The analysis does not control for fees, account and position clustering, changing market regimes, selection/survivorship effects, or temporal leakage. It therefore cannot establish that a sentiment category caused a result or guarantee that any strategy will work in the future.
 
-## Author Notes
+## Project structure
 
-This analysis was created as a data science assignment examining the Hyperliquid exchange. The correlations identified suggest that **market sentiment drives measurable differences in trader profitability**, making sentiment analysis a valuable component of trading systems.
+```text
+analysis.ipynb                 Original exploratory notebook
+scripts/reporting.py           Full-data reporting CLI
+tests/test_reporting.py        Synthetic-fixture unit tests
+docs/REPORTING.md              Reporting workflow documentation
+.github/workflows/             Automated reporting tests
+```
 
 ## License
 
-MIT License — See LICENSE file for details
-
-## Contact & Questions
-
-For insights, methodology questions, or dataset inquiries, please open an issue or discussion.
-
----
-
-**Last Updated:** April 2026  
-**Data Range:** May 2023 - May 2025  
-**Analysis Focus:** Sentiment-driven trading behavior in crypto markets
+MIT License — see `LICENSE` if present in the upstream repository.
