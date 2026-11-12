@@ -52,8 +52,11 @@ The command creates:
 - `reports/pnl_by_side.csv`
 - `reports/pnl_by_sentiment_and_side.csv`
 - `reports/executive_report.md`
+- `reports/verification_manifest.json`
 
 `reports/` is Git-ignored so the outputs can be regenerated locally from the tracked real inputs. See [docs/REPORTING.md](docs/REPORTING.md) for the concise workflow reference. The original exploratory analysis remains available in `analysis.ipynb`.
+
+The reconciliation convention is explicit: `Timestamp IST` is matched by its local IST calendar date to the sentiment extract's ISO date field. The sentiment source does not declare a timezone, so no UTC conversion is assumed. Exact duplicate rows and repeated transaction IDs are audit counts and are retained—never removed automatically—because they can represent legitimate multiple events.
 
 ## Verified findings and limitations
 
