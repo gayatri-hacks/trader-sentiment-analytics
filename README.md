@@ -20,6 +20,8 @@ The repository tracks the two input files used by both the original notebook and
 - `historical_data (1).csv` — supplied Hyperliquid historical trade export, with account, asset, transaction-side, timestamp, realised `Closed PnL`, fee, and transaction identifiers.
 - `fear_greed_index.csv` — supplied daily Bitcoin Fear & Greed Index extract, with timestamp, numeric index value, classification, and date.
 
+The source CSVs include operational trading information and are tracked in the public repository today. Their public-hosting rights have not been established by this code audit: repository owners must obtain and document permission (including any Hyperliquid export terms, account-holder consent, and third-party sentiment-source licence) before treating this repository as an approved public distribution. The application itself never exposes raw rows through its API.
+
 The reporting process never fabricates or imputes input values. Its exact input scope, record counts, date matching, and exclusions are exported every time it runs.
 
 ## Dataset volume and coverage
@@ -55,6 +57,26 @@ The command creates:
 - `reports/verification_manifest.json`
 
 `reports/` is Git-ignored so the outputs can be regenerated locally from the tracked real inputs. See [docs/REPORTING.md](docs/REPORTING.md) for the concise workflow reference. The original exploratory analysis remains available in `analysis.ipynb`.
+
+## Trader Sentiment Intelligence dashboard
+
+The repository also contains a local React + TypeScript dashboard and FastAPI aggregate API. It uses the same real tracked inputs and reporting conventions; raw records, accounts, and transaction IDs are never sent to the browser.
+
+```bash
+python -m pip install -r requirements.txt
+uvicorn backend.main:app --reload
+cd frontend && npm ci && npm run dev
+```
+
+Verification commands:
+
+```bash
+python3 -m unittest discover -s tests -v
+python3 scripts/reporting.py --out reports
+cd frontend && npm ci && npm run lint && npx tsc --noEmit && npm test && npm run build
+```
+
+See [web architecture](docs/WEB_ARCHITECTURE.md), the [API contract](docs/API_CONTRACT.md), and [verification notes](docs/WEB_VERIFICATION.md). This is retrospective descriptive analytics, not a prediction system or live trading product.
 
 The reconciliation convention is explicit: `Timestamp IST` is matched by its local IST calendar date to the sentiment extract's ISO date field. The sentiment source does not declare a timezone, so no UTC conversion is assumed. Exact duplicate rows and repeated transaction IDs are audit counts and are retained—never removed automatically—because they can represent legitimate multiple events.
 

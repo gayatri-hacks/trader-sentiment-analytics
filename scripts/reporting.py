@@ -10,6 +10,7 @@ import argparse
 import hashlib
 import json
 import math
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,16 @@ TRADE_COLUMNS = ("Timestamp IST", "Account", "Coin", "Side", "Closed PnL")
 IDENTIFIER_COLUMNS = ("Transaction Hash", "Order ID", "Trade ID")
 TRADE_TIMESTAMP_FORMATS = ("%d-%m-%Y %H:%M", "%d-%m-%Y %H:%M:%S")
 SENTIMENT_DATE_FORMAT = "%Y-%m-%d"
+
+
+@dataclass(frozen=True)
+class ReconciledDataset:
+    """The one validated trade population used by reports and the API.
+
+    This remains private to the server/CLI: callers publish aggregates only.
+    """
+    records: pd.DataFrame
+    metrics: dict[str, Any]
 
 
 def _read_csv(path: Path, *, label: str) -> pd.DataFrame:
@@ -82,7 +93,7 @@ def _identifier_metrics(raw: pd.DataFrame) -> dict[str, int]:
     return metrics
 
 
-def analyze(trades_path: Path, sentiment_path: Path) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, dict[str, Any]]:
+def reconcile(trades_path: Path, sentiment_path: Path) -> ReconciledDataset:
     """Validate and reconcile CSVs. No trade records are automatically deduplicated.
 
     Exact duplicate rows and repeated IDs are reported, not removed: one ID can
@@ -146,7 +157,21 @@ def analyze(trades_path: Path, sentiment_path: Path) -> tuple[pd.DataFrame, pd.D
     metrics["sentiment_coverage_pct"] = 100 * len(matched) / len(valid) if len(valid) else 0.0
     assert metrics["source_records"] == metrics["valid_records"] + metrics["excluded_invalid_records"]
     assert metrics["valid_records"] == metrics["matched_sentiment_records"] + metrics["unmatched_sentiment_records"]
-    return (_aggregate(nonzero, ["classification"], list(SENTIMENT_ORDER)), _aggregate(nonzero, ["Side"]), _aggregate(nonzero, ["classification", "Side"]), metrics)
+    return ReconciledDataset(records=joined, metrics=metrics)
+
+
+def analyze(trades_path: Path, sentiment_path: Path) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, dict[str, Any]]:
+    """Create full-dataset report tables from the canonical reconciliation."""
+    reconciled = reconcile(trades_path, sentiment_path)
+    nonzero = reconciled.records.loc[
+        reconciled.records["classification"].notna() & reconciled.records["pnl"].ne(0)
+    ].copy()
+    return (
+        _aggregate(nonzero, ["classification"], list(SENTIMENT_ORDER)),
+        _aggregate(nonzero, ["Side"]),
+        _aggregate(nonzero, ["classification", "Side"]),
+        reconciled.metrics,
+    )
 
 
 def quality_table(metrics: dict[str, Any]) -> pd.DataFrame:
