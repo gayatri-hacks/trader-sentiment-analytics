@@ -1,4 +1,4 @@
-"""Cached, aggregate-only access to the reporting pipeline's reconciled inputs."""
+"""Aggregate-only access to the canonical reporting reconciliation."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -19,55 +19,51 @@ class Dataset:
     metrics: dict
 
 
-def _records(trades_path: Path, sentiment_path: Path) -> Dataset:
-    """Use the same strict parsers, sentiment policy, and finite PnL semantics as CLI."""
-    raw = reporting._read_csv(trades_path, label="Trade")
-    missing = sorted(set(reporting.TRADE_COLUMNS) - set(raw.columns))
-    if missing:
-        raise ValueError(f"Trade CSV is missing required columns: {missing}")
-    sentiment_source = reporting._read_csv(sentiment_path, label="Sentiment")
-    if {"date", "classification"} - set(sentiment_source.columns):
-        raise ValueError("Sentiment CSV is missing required columns")
-    trades = raw.loc[:, reporting.TRADE_COLUMNS].copy()
-    trades["date"] = reporting._parse_trade_dates(trades["Timestamp IST"])
-    trades["pnl"] = pd.to_numeric(trades["Closed PnL"], errors="coerce")
-    finite = trades["pnl"].map(lambda x: bool(pd.notna(x) and __import__("math").isfinite(float(x))))
-    valid = trades.loc[trades["date"].notna() & finite].copy()
-    valid["Side"] = reporting._normalise_text(valid["Side"]).fillna("UNKNOWN").str.upper()
-    sentiment = sentiment_source.loc[:, ["date", "classification"]].copy()
-    sentiment["date"] = reporting._parse_sentiment_dates(sentiment["date"])
-    sentiment["classification"] = reporting._normalise_text(sentiment["classification"])
-    sentiment = sentiment.dropna(subset=["date", "classification"])
-    if set(sentiment["classification"]) - set(reporting.SENTIMENT_ORDER):
-        raise ValueError("Sentiment CSV has unrecognized classifications")
-    if (sentiment.groupby("date")["classification"].nunique() > 1).any():
-        raise ValueError("Sentiment CSV has conflicting classifications for the same date")
-    sentiment = sentiment.drop_duplicates("date", keep="first")
-    joined = valid.merge(sentiment, how="left", on="date", validate="many_to_one", sort=False)
-    _, _, _, metrics = reporting.analyze(trades_path, sentiment_path)
-    return Dataset(joined, metrics)
-
-
 @lru_cache(maxsize=1)
 def dataset() -> Dataset:
-    """Process the 211K-row inputs once per process; restart invalidates this cache."""
-    return _records(ROOT / "historical_data (1).csv", ROOT / "fear_greed_index.csv")
+    """Cache one canonical, validated reconciliation per process."""
+    reconciled = reporting.reconcile(ROOT / "historical_data (1).csv", ROOT / "fear_greed_index.csv")
+    return Dataset(reconciled.records, reconciled.metrics)
 
 
-def apply_filters(frame: pd.DataFrame, start: str | None = None, end: str | None = None,
-                  asset: str | None = None, sentiment: str | None = None, side: str | None = None) -> pd.DataFrame:
-    filtered = frame.copy()
-    if start:
-        filtered = filtered[filtered["date"] >= pd.Timestamp(start)]
-    if end:
-        filtered = filtered[filtered["date"] <= pd.Timestamp(end)]
-    if asset:
-        filtered = filtered[filtered["Coin"] == asset]
-    if sentiment:
-        filtered = filtered[filtered["classification"] == sentiment]
-    if side:
-        filtered = filtered[filtered["Side"] == side.upper()]
-    return filtered
+def clear_dataset_cache() -> None:
+    dataset.cache_clear()
+
+
+def validate_filters(start: str | None = None, end: str | None = None, asset: str | None = None,
+                     sentiment: str | None = None, side: str | None = None) -> dict[str, str | None]:
+    frame = dataset().records
+    try:
+        parsed_start = pd.Timestamp(start).normalize() if start else None
+        parsed_end = pd.Timestamp(end).normalize() if end else None
+    except (TypeError, ValueError) as exc:
+        raise ValueError("dates must use ISO YYYY-MM-DD") from exc
+    if parsed_start is not None and parsed_end is not None and parsed_start > parsed_end:
+        raise ValueError("start must be on or before end")
+    if asset and asset not in set(frame["Coin"].dropna()):
+        raise ValueError("unknown asset")
+    if sentiment and sentiment not in reporting.SENTIMENT_ORDER:
+        raise ValueError("unknown sentiment classification")
+    if side and side.upper() not in set(frame["Side"].dropna()):
+        raise ValueError("unknown transaction side")
+    return {"start": parsed_start.isoformat() if parsed_start is not None else None,
+            "end": parsed_end.isoformat() if parsed_end is not None else None,
+            "asset": asset, "sentiment": sentiment, "side": side.upper() if side else None}
+
+
+def apply_filters(frame: pd.DataFrame, **filters: str | None) -> pd.DataFrame:
+    filtered = frame
+    if filters.get("start"):
+        filtered = filtered[filtered["date"] >= pd.Timestamp(filters["start"])]
+    if filters.get("end"):
+        filtered = filtered[filtered["date"] <= pd.Timestamp(filters["end"])]
+    if filters.get("asset"):
+        filtered = filtered[filtered["Coin"] == filters["asset"]]
+    if filters.get("sentiment"):
+        filtered = filtered[filtered["classification"] == filters["sentiment"]]
+    if filters.get("side"):
+        filtered = filtered[filtered["Side"] == filters["side"]]
+    return filtered.copy()
 
 
 def aggregate(frame: pd.DataFrame, columns: list[str]) -> list[dict]:
@@ -75,7 +71,6 @@ def aggregate(frame: pd.DataFrame, columns: list[str]) -> list[dict]:
     if eligible.empty:
         return []
     grouped = eligible.groupby(columns, dropna=False)["pnl"].agg(records="count", total_pnl="sum", mean_pnl="mean", median_pnl="median")
-    wins = eligible.assign(win=eligible["pnl"] > 0).groupby(columns, dropna=False)["win"].sum()
-    grouped["winning_records"] = wins.astype(int)
+    grouped["winning_records"] = eligible.assign(win=eligible["pnl"] > 0).groupby(columns, dropna=False)["win"].sum().astype(int)
     grouped["win_rate_pct"] = 100 * grouped["winning_records"] / grouped["records"]
     return grouped.reset_index().to_dict(orient="records")

@@ -9,7 +9,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, PlainTextResponse
 from pydantic import BaseModel
 
-from .service import ROOT, aggregate, apply_filters, dataset
+from .service import ROOT, aggregate, apply_filters, dataset, validate_filters
 
 app = FastAPI(title="Trader Sentiment Intelligence", version="1.0.0")
 REPORTS = {"pnl_by_sentiment.csv", "pnl_by_side.csv", "pnl_by_sentiment_and_side.csv", "data_quality_summary.csv", "executive_report.md"}
@@ -29,7 +29,7 @@ class Overview(BaseModel):
 def filtered(start: str | None = None, end: str | None = None, asset: str | None = None,
              sentiment: str | None = None, side: str | None = None):
     try:
-        return apply_filters(dataset().records, start, end, asset, sentiment, side)
+        return apply_filters(dataset().records, **validate_filters(start, end, asset, sentiment, side))
     except (ValueError, TypeError) as exc:
         raise HTTPException(422, f"Invalid filter: {exc}") from exc
 
@@ -87,8 +87,16 @@ def filters():
 @app.get("/api/reports/{approved_report_name}")
 def report(approved_report_name: Literal["pnl_by_sentiment.csv", "pnl_by_side.csv", "pnl_by_sentiment_and_side.csv", "data_quality_summary.csv", "executive_report.md"]):
     report_dir = ROOT / "reports-api"
-    if not report_dir.exists():
-        from .service import reporting
+    from .service import reporting
+    manifest_path = report_dir / "verification_manifest.json"
+    current_inputs = [{"filename": path.name, "sha256": reporting._sha256(path)} for path in (ROOT / "historical_data (1).csv", ROOT / "fear_greed_index.csv")]
+    stale = not manifest_path.exists()
+    if not stale:
+        try:
+            stale = json.loads(manifest_path.read_text())["inputs"] != current_inputs
+        except (ValueError, KeyError):
+            stale = True
+    if stale:
         reporting.write_reports(ROOT / "historical_data (1).csv", ROOT / "fear_greed_index.csv", report_dir)
     path = report_dir / approved_report_name
     return FileResponse(path, filename=approved_report_name) if path.suffix == ".csv" else PlainTextResponse(path.read_text())
